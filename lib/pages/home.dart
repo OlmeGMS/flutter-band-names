@@ -1,8 +1,11 @@
 import 'dart:io';
 
+import 'package:band_names/services/sockect_service.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:band_names/models/band.dart';
+import 'package:pie_chart/pie_chart.dart';
+import 'package:provider/provider.dart';
 
 class HomePage extends StatefulWidget {
   @override
@@ -11,37 +14,71 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   List<Band> bands = [
-    Band(id: '1', name: 'Metalica', votes: 5),
-    Band(id: '2', name: 'Queen', votes: 10),
-    Band(id: '3', name: 'Kiss', votes: 7),
-    Band(id: '4', name: 'ACDC', votes: 5),
+    //Band(id: '1', name: 'Metalica', votes: 5),
+    //Band(id: '2', name: 'Queen', votes: 10),
+    //Band(id: '3', name: 'Kiss', votes: 7),
+    //Band(id: '4', name: 'ACDC', votes: 5),
   ];
 
   @override
+  void initState() {
+    final socketService = Provider.of<SockectService>(context, listen: false);
+
+    socketService.socket.on('active-bands', _handleActiveBands);
+    super.initState();
+  }
+
+  _handleActiveBands(dynamic payload) {
+    this.bands = (payload as List).map((band) => Band.fromMap(band)).toList();
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    final socketService = Provider.of<SockectService>(context, listen: false);
+    socketService.socket.off('active-bands');
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final socketService = Provider.of<SockectService>(context);
+
     return Scaffold(
         appBar: AppBar(
           title: Text('BandNames', style: TextStyle(color: Colors.black87)),
           backgroundColor: Colors.white,
           elevation: 1,
+          actions: <Widget>[
+            Container(
+              margin: EdgeInsets.only(right: 10),
+              child: (socketService.serverStatus == ServerStatus.Online)
+                  ? Icon(Icons.check_circle, color: Colors.blue[300])
+                  : Icon(Icons.offline_bolt, color: Colors.red),
+            )
+          ],
         ),
-        body: ListView.builder(
-            itemCount: bands.length,
-            itemBuilder: (BuildContext context, int index) =>
-                _bandTile(bands[index])),
+        body: Column(
+          children: <Widget>[
+            _showGraph(),
+            Expanded(
+              child: ListView.builder(
+                  itemCount: bands.length,
+                  itemBuilder: (BuildContext context, int index) =>
+                      _bandTile(bands[index])),
+            )
+          ],
+        ),
         floatingActionButton: FloatingActionButton(
             child: Icon(Icons.add), elevation: 1, onPressed: addNewband));
   }
 
   Widget _bandTile(Band band) {
+    final sockectService = Provider.of<SockectService>(context, listen: false);
     return Dismissible(
       key: Key(band.id),
       direction: DismissDirection.startToEnd,
-      onDismissed: (direction) {
-        print('direction: $direction');
-        print('id: ${band.id}');
-        // TODO: llamar el borrador del server
-      },
+      onDismissed: (_) => sockectService.emit('delete-band', {'id': band.id}),
       background: Container(
           padding: EdgeInsets.only(left: 8.0),
           color: Colors.red,
@@ -56,9 +93,7 @@ class _HomePageState extends State<HomePage> {
         ),
         title: Text(band.name),
         trailing: Text('${band.votes}', style: TextStyle(fontSize: 20)),
-        onTap: () {
-          print(band.name);
-        },
+        onTap: () => sockectService.socket.emit('vote-band', {'id': band.id}),
       ),
     );
   }
@@ -69,21 +104,19 @@ class _HomePageState extends State<HomePage> {
       // Android
       return showDialog(
           context: context,
-          builder: (context) {
-            return AlertDialog(
-              title: Text('New band name: '),
-              content: TextField(
-                controller: textController,
-              ),
-              actions: <Widget>[
-                MaterialButton(
-                    child: Text('Add'),
-                    elevation: 5,
-                    textColor: Colors.blue,
-                    onPressed: () => addBandToList(textController.text))
-              ],
-            );
-          });
+          builder: (_) => AlertDialog(
+                title: Text('New band name: '),
+                content: TextField(
+                  controller: textController,
+                ),
+                actions: <Widget>[
+                  MaterialButton(
+                      child: Text('Add'),
+                      elevation: 5,
+                      textColor: Colors.blue,
+                      onPressed: () => addBandToList(textController.text))
+                ],
+              ));
     }
     showCupertinoDialog(
         context: context,
@@ -111,9 +144,48 @@ class _HomePageState extends State<HomePage> {
     print(name);
     if (name.length > 1) {
       // Podemos agregar
-      bands.add(new Band(id: DateTime.now().toString(), name: name, votes: 0));
-      setState(() {});
+      final sockectService =
+          Provider.of<SockectService>(context, listen: false);
+      sockectService.emit('add-band', {'name': name});
     }
     Navigator.pop(context);
+  }
+
+  // Mostrar grafica
+  Widget _showGraph() {
+    Map<String, double> dataMap = new Map();
+    //"Flutter": 5,
+    bands.forEach((band) {
+      dataMap.putIfAbsent(band.name, () => band.votes.toDouble());
+    });
+
+    final List<Color> colorList = [
+      Colors.blue[50],
+      Colors.blue[200],
+      Colors.pink[50],
+      Colors.pink[200],
+      Colors.yellow[50],
+      Colors.yellow[200],
+    ];
+
+    return dataMap.isNotEmpty
+        ? Container(
+            width: double.infinity,
+            height: 200,
+            child: PieChart(
+              dataMap: dataMap,
+              animationDuration: Duration(milliseconds: 800),
+              chartRadius: MediaQuery.of(context).size.width / 3.2,
+              colorList: colorList,
+              initialAngleInDegree: 0,
+              chartType: ChartType.disc,
+              ringStrokeWidth: 32,
+              chartValuesOptions: ChartValuesOptions(
+                showChartValueBackground: true,
+                showChartValuesInPercentage: false,
+                showChartValuesOutside: false,
+              ),
+            ))
+        : LinearProgressIndicator();
   }
 }
